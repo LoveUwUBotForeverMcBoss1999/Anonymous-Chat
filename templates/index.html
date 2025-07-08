@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anonymous Chat - Find Random People</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
+            color: #ffffff;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+            flex-direction: column;
+        }
+
+        .header {
+            background: rgba(20, 20, 20, 0.9);
+            padding: 15px 20px;
+            border-bottom: 2px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(10px);
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #00ff88;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .user-count {
+            background: rgba(0, 255, 136, 0.2);
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            border: 1px solid #00ff88;
+        }
+
+        .username {
+            color: #00ff88;
+            font-weight: bold;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-height: calc(100vh - 80px);
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: rgba(15, 15, 15, 0.8);
+            margin: 10px;
+            border-radius: 15px;
+            border: 1px solid #333;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: rgba(30, 30, 30, 0.9);
+            padding: 15px 20px;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-status {
+            font-size: 16px;
+            color: #00ff88;
+            font-weight: bold;
+        }
+
+        .chat-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(45deg, #00ff88, #00cc6a);
+            color: #000;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 255, 136, 0.4);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 1px solid #555;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: linear-gradient(45deg, #ff4757, #ff3742);
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 71, 87, 0.4);
+        }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: rgba(10, 10, 10, 0.5);
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 12px 16px;
+            border-radius: 12px;
+            max-width: 80%;
+            word-wrap: break-word;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .message.own {
+            background: linear-gradient(45deg, #00ff88, #00cc6a);
+            color: #000;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .message.other {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 1px solid #333;
+        }
+
+        .message.system {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            text-align: center;
+            margin: 0 auto;
+            border: 1px solid #ffc107;
+            font-style: italic;
+        }
+
+        .message-header {
+            font-size: 12px;
+            opacity: 0.8;
+            margin-bottom: 4px;
+        }
+
+        .message-content {
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .typing-indicator {
+            color: #00ff88;
+            font-style: italic;
+            animation: pulse 1.5s infinite;
+        }
+
+        .input-container {
+            padding: 15px 20px;
+            background: rgba(20, 20, 20, 0.9);
+            border-top: 1px solid #333;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .message-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #444;
+            border-radius: 25px;
+            background: rgba(30, 30, 30, 0.8);
+            color: #fff;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+
+        .message-input:focus {
+            border-color: #00ff88;
+            box-shadow: 0 0 0 2px rgba(0, 255, 136, 0.2);
+        }
+
+        .message-input::placeholder {
+            color: #888;
+        }
+
+        .send-btn {
+            background: linear-gradient(45deg, #00ff88, #00cc6a);
+            color: #000;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(0, 255, 136, 0.4);
+        }
+
+        .welcome-screen {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .welcome-title {
+            font-size: 48px;
+            font-weight: bold;
+            color: #00ff88;
+            margin-bottom: 20px;
+            text-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+        }
+
+        .welcome-subtitle {
+            font-size: 18px;
+            color: #ccc;
+            margin-bottom: 30px;
+            max-width: 600px;
+            line-height: 1.6;
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+            max-width: 800px;
+        }
+
+        .feature {
+            background: rgba(30, 30, 30, 0.6);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #333;
+            text-align: left;
+        }
+
+        .feature-icon {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        .feature-title {
+            color: #00ff88;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .feature-desc {
+            color: #ccc;
+            font-size: 14px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .scrollbar-custom {
+            scrollbar-width: thin;
+            scrollbar-color: #00ff88 #222;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar-track {
+            background: #222;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar-thumb {
+            background: #00ff88;
+            border-radius: 4px;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar-thumb:hover {
+            background: #00cc6a;
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
+                gap: 10px;
+                padding: 10px;
+            }
+
+            .user-info {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .chat-header {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .chat-controls {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
+            .welcome-title {
+                font-size: 36px;
+            }
+
+            .features {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="logo">🌐 Anonymous Chat</div>
+            <div class="user-info">
+                <div class="user-count">
+                    <span id="userCount">0</span> users online
+                </div>
+                <div class="username">
+                    You: <span id="currentUsername">Guest</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <div id="welcomeScreen" class="welcome-screen">
+                <div class="welcome-title">Find Random People to Chat</div>
+                <div class="welcome-subtitle">
+                    Connect with strangers around the world instantly. No registration required, completely anonymous, and your conversations are never saved.
+                </div>
+
+                <div class="features">
+                    <div class="feature">
+                        <div class="feature-icon">🎭</div>
+                        <div class="feature-title">100% Anonymous</div>
+                        <div class="feature-desc">Chat without revealing your identity. Random usernames assigned automatically.</div>
+                    </div>
+                    <div class="feature">
+                        <div class="feature-icon">🚀</div>
+                        <div class="feature-title">Instant Connection</div>
+                        <div class="feature-desc">Get matched with random people instantly. No waiting, no hassle.</div>
+                    </div>
+                    <div class="feature">
+                        <div class="feature-icon">🔒</div>
+                        <div class="feature-title">No Data Saved</div>
+                        <div class="feature-desc">Your messages disappear when you leave. Complete privacy guaranteed.</div>
+                    </div>
+                    <div class="feature">
+                        <div class="feature-icon">🌍</div>
+                        <div class="feature-title">Global Community</div>
+                        <div class="feature-desc">Meet people from all over the world. Unlimited connections.</div>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" onclick="findStranger()" style="font-size: 18px; padding: 15px 30px;">
+                    🎲 Start Chatting
+                </button>
+            </div>
+
+            <div id="chatContainer" class="chat-container" style="display: none;">
+                <div class="chat-header">
+                    <div class="chat-status" id="chatStatus">Ready to chat</div>
+                    <div class="chat-controls">
+                        <button class="btn btn-primary" onclick="findStranger()">🎲 New Chat</button>
+                        <button class="btn btn-danger" onclick="leaveChat()">❌ Leave</button>
+                    </div>
+                </div>
+
+                <div class="messages-container scrollbar-custom" id="messagesContainer">
+                    <!-- Messages will appear here -->
+                </div>
+
+                <div class="typing-indicator" id="typingIndicator" style="display: none; padding: 10px 20px;">
+                    Someone is typing...
+                </div>
+
+                <div class="input-container">
+                    <input
+                        type="text"
+                        class="message-input"
+                        id="messageInput"
+                        placeholder="Type your message..."
+                        maxlength="500"
+                        disabled
+                    >
+                    <button class="send-btn" onclick="sendMessage()" id="sendBtn" disabled>
+                        📤 Send
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let currentUsername = 'Guest';
+        let isConnectedToStranger = false;
+        let typingTimeout;
+
+        // DOM elements
+        const welcomeScreen = document.getElementById('welcomeScreen');
+        const chatContainer = document.getElementById('chatContainer');
+        const messagesContainer = document.getElementById('messagesContainer');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const chatStatus = document.getElementById('chatStatus');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const userCountElement = document.getElementById('userCount');
+        const currentUsernameElement = document.getElementById('currentUsername');
+
+        // Socket event listeners
+        socket.on('user_connected', function(data) {
+            currentUsername = data.username;
+            currentUsernameElement.textContent = currentUsername;
+            userCountElement.textContent = data.total_users;
+        });
+
+        socket.on('user_count_update', function(data) {
+            userCountElement.textContent = data.count;
+        });
+
+        socket.on('waiting_for_stranger', function(data) {
+            showChatInterface();
+            addSystemMessage(data.message);
+            chatStatus.textContent = 'Looking for someone...';
+            chatStatus.style.color = '#ffc107';
+        });
+
+        socket.on('stranger_found', function(data) {
+            isConnectedToStranger = true;
+            addSystemMessage(data.message);
+            chatStatus.textContent = 'Connected to stranger';
+            chatStatus.style.color = '#00ff88';
+            messageInput.disabled = false;
+            sendBtn.disabled = false;
+            messageInput.focus();
+        });
+
+        socket.on('receive_message', function(data) {
+            addMessage(data.message, data.username, data.user_id === getCurrentUserId() ? 'own' : 'other');
+        });
+
+        socket.on('user_typing', function(data) {
+            if (data.typing) {
+                typingIndicator.textContent = `${data.username} is typing...`;
+                typingIndicator.style.display = 'block';
+            } else {
+                typingIndicator.style.display = 'none';
+            }
+        });
+
+        socket.on('user_left', function(data) {
+            isConnectedToStranger = false;
+            addSystemMessage(data.message);
+            chatStatus.textContent = 'Stranger disconnected';
+            chatStatus.style.color = '#ff4757';
+            messageInput.disabled = true;
+            sendBtn.disabled = true;
+            typingIndicator.style.display = 'none';
+        });
+
+        socket.on('chat_left', function(data) {
+            isConnectedToStranger = false;
+            addSystemMessage(data.message);
+            chatStatus.textContent = 'You left the chat';
+            chatStatus.style.color = '#888';
+            messageInput.disabled = true;
+            sendBtn.disabled = true;
+            typingIndicator.style.display = 'none';
+        });
+
+        // Functions
+        function getCurrentUserId() {
+            return socket.id;
+        }
+
+        function showChatInterface() {
+            welcomeScreen.style.display = 'none';
+            chatContainer.style.display = 'flex';
+        }
+
+        function findStranger() {
+            socket.emit('find_stranger');
+        }
+
+        function leaveChat() {
+            socket.emit('leave_chat');
+        }
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (message && isConnectedToStranger) {
+                socket.emit('send_message', {
+                    message: message,
+                    timestamp: new Date().toLocaleTimeString()
+                });
+                messageInput.value = '';
+                stopTyping();
+            }
+        }
+
+        function addMessage(content, username, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'message-header';
+            headerDiv.textContent = type === 'own' ? 'You' : username;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = content;
+
+            messageDiv.appendChild(headerDiv);
+            messageDiv.appendChild(contentDiv);
+
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function addSystemMessage(content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message system';
+            messageDiv.textContent = content;
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function startTyping() {
+            socket.emit('typing', { typing: true });
+
+            clearTimeout(typingTimeout);
+            typingTimeout = setTimeout(() => {
+                stopTyping();
+            }, 3000);
+        }
+
+        function stopTyping() {
+            socket.emit('typing', { typing: false });
+            clearTimeout(typingTimeout);
+        }
+
+        // Event listeners
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            } else if (isConnectedToStranger) {
+                startTyping();
+            }
+        });
+
+        messageInput.addEventListener('input', function() {
+            if (isConnectedToStranger && messageInput.value.length > 0) {
+                startTyping();
+            } else {
+                stopTyping();
+            }
+        });
+
+        // Auto-focus on message input when chat is active
+        setInterval(() => {
+            if (isConnectedToStranger && document.activeElement !== messageInput) {
+                messageInput.focus();
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
