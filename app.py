@@ -1,230 +1,142 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
-import uuid
-import random
-import threading
 import time
+import threading
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 
-# Configure for Vercel - polling only, no WebSocket
-socketio = SocketIO(app,
-                    cors_allowed_origins="*",
-                    transport=['polling'],  # Only polling, no websocket
-                    async_mode='threading')
+# Optimized SocketIO configuration
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode='threading',
+    logger=False,
+    engineio_logger=False,
+    ping_timeout=60,
+    ping_interval=25
+)
 
-# Store active users
-active_users = {}
-waiting_queue = []
-matching_lock = threading.Lock()
-
-
-def generate_random_name():
-    """Generate a random username"""
-    adjectives = ['Cool', 'Fast', 'Smart', 'Funny', 'Wild', 'Brave', 'Quick', 'Sharp', 'Bright', 'Swift']
-    nouns = ['Tiger', 'Eagle', 'Wolf', 'Fox', 'Bear', 'Lion', 'Shark', 'Falcon', 'Panther', 'Hawk']
-    return f"{random.choice(adjectives)}{random.choice(nouns)}{random.randint(10, 99)}"
+# Efficient user management
+users = {}  # {session_id: {'username': str, 'last_seen': float}}
+user_lock = threading.Lock()
 
 
-def auto_match_users():
-    """Auto-match users every 2 seconds"""
+def cleanup_inactive_users():
+    """Remove users who haven't been seen for 30 seconds"""
     while True:
-        time.sleep(2)
-        with matching_lock:
-            if len(waiting_queue) >= 2:
-                # Get two users from queue
-                user1_sid = waiting_queue.pop(0)
-                user2_sid = waiting_queue.pop(0)
-
-                # Check if both users still exist
-                if user1_sid in active_users and user2_sid in active_users:
-                    user1 = active_users[user1_sid]
-                    user2 = active_users[user2_sid]
-
-                    # Create room
-                    room_id = str(uuid.uuid4())
-
-                    # Join room
-                    with app.test_request_context():
-                        socketio.server.enter_room(user1_sid, room_id)
-                        socketio.server.enter_room(user2_sid, room_id)
-
-                    # Update user info
-                    user1['room'] = room_id
-                    user2['room'] = room_id
-
-                    # Notify both users
-                    socketio.emit('stranger_found', {
-                        'room_id': room_id,
-                        'partner': user2['username']
-                    }, room=user1_sid)
-
-                    socketio.emit('stranger_found', {
-                        'room_id': room_id,
-                        'partner': user1['username']
-                    }, room=user2_sid)
+        current_time = time.time()
+        with user_lock:
+            inactive_users = [
+                sid for sid, user in users.items()
+                if current_time - user['last_seen'] > 30
+            ]
+            for sid in inactive_users:
+                if sid in users:
+                    del users[sid]
+        time.sleep(10)
 
 
-# Start auto-matching thread
-matching_thread = threading.Thread(target=auto_match_users, daemon=True)
-matching_thread.start()
+# Start cleanup thread
+cleanup_thread = threading.Thread(target=cleanup_inactive_users, daemon=True)
+cleanup_thread.start()
 
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    # Serve the HTML directly
+    with open('index.html', 'r') as f:
+        return f.read()
 
 
 @socketio.on('connect')
 def handle_connect():
-    try:
-        user_id = str(uuid.uuid4())
-        username = generate_random_name()
-
-        active_users[request.sid] = {
-            'id': user_id,
-            'username': username,
-            'room': None
-        }
-
-        emit('user_connected', {
-            'username': username,
-            'user_id': user_id,
-            'total_users': len(active_users)
-        })
-
-        # Auto-start looking for stranger
-        with matching_lock:
-            if request.sid not in waiting_queue:
-                waiting_queue.append(request.sid)
-                emit('waiting_for_stranger', {
-                    'message': 'Looking for someone to chat with...'
-                })
-
-        # Broadcast user count
-        socketio.emit('user_count_update', {'count': len(active_users)})
-
-    except Exception as e:
-        print(f"Connect error: {e}")
+    """Handle user connection"""
+    print(f'User connected: {request.sid}')
 
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    try:
-        if request.sid in active_users:
-            user = active_users[request.sid]
+    """Handle user disconnection"""
+    with user_lock:
+        if request.sid in users:
+            username = users[request.sid]['username']
+            del users[request.sid]
 
-            # Remove from waiting queue
-            with matching_lock:
-                if request.sid in waiting_queue:
-                    waiting_queue.remove(request.sid)
+            # Broadcast updated user list
+            user_list = [user['username'] for user in users.values()]
+            emit('user_list', user_list, broadcast=True)
 
-            # Leave room if in one
-            if user['room']:
-                socketio.emit('user_left', {
-                    'username': user['username'],
-                    'message': f"{user['username']} left the chat"
-                }, room=user['room'])
-
-            del active_users[request.sid]
-
-            # Broadcast user count
-            socketio.emit('user_count_update', {'count': len(active_users)})
-
-    except Exception as e:
-        print(f"Disconnect error: {e}")
+            print(f'User disconnected: {username}')
 
 
-@socketio.on('find_stranger')
-def handle_find_stranger():
-    try:
-        current_user = active_users.get(request.sid)
-        if not current_user:
-            return
+@socketio.on('join')
+def handle_join(data):
+    """Handle user joining the chat"""
+    username = data['username']
 
-        # Leave current room
-        if current_user['room']:
-            socketio.emit('user_left', {
-                'username': current_user['username'],
-                'message': f"{current_user['username']} left the chat"
-            }, room=current_user['room'])
-            current_user['room'] = None
+    with user_lock:
+        # Check if username already exists
+        existing_usernames = [user['username'] for user in users.values()]
+        if username in existing_usernames:
+            original_username = username
+            counter = 1
+            while username in existing_usernames:
+                username = f"{original_username}_{counter}"
+                counter += 1
 
-        # Add to waiting queue
-        with matching_lock:
-            if request.sid not in waiting_queue:
-                waiting_queue.append(request.sid)
-                emit('waiting_for_stranger', {
-                    'message': 'Looking for someone to chat with...'
-                })
-
-    except Exception as e:
-        print(f"Find stranger error: {e}")
-
-
-@socketio.on('send_message')
-def handle_message(data):
-    try:
-        user = active_users.get(request.sid)
-        if not user or not user['room']:
-            return
-
-        message_data = {
-            'username': user['username'],
-            'message': data['message'],
-            'timestamp': data.get('timestamp', ''),
-            'user_id': user['id']
+        # Add user
+        users[request.sid] = {
+            'username': username,
+            'last_seen': time.time()
         }
 
-        socketio.emit('receive_message', message_data, room=user['room'])
+        # Send updated user list to everyone
+        user_list = [user['username'] for user in users.values()]
+        emit('user_list', user_list, broadcast=True)
 
-    except Exception as e:
-        print(f"Message error: {e}")
+        print(f'User joined: {username}')
+
+
+@socketio.on('message')
+def handle_message(data):
+    """Handle chat messages"""
+    if request.sid not in users:
+        return
+
+    with user_lock:
+        users[request.sid]['last_seen'] = time.time()
+        username = users[request.sid]['username']
+
+    message_data = {
+        'username': username,
+        'message': data['message'],
+        'timestamp': time.time()
+    }
+
+    emit('message', message_data, broadcast=True)
 
 
 @socketio.on('typing')
 def handle_typing(data):
-    try:
-        user = active_users.get(request.sid)
-        if not user or not user['room']:
-            return
+    """Handle typing indicators"""
+    if request.sid not in users:
+        return
 
-        socketio.emit('user_typing', {
-            'username': user['username'],
-            'typing': data['typing']
-        }, room=user['room'], include_self=False)
+    with user_lock:
+        users[request.sid]['last_seen'] = time.time()
+        username = users[request.sid]['username']
 
-    except Exception as e:
-        print(f"Typing error: {e}")
+    emit('user_typing', {
+        'username': username,
+        'typing': data['typing']
+    }, broadcast=True, include_self=False)
 
 
-@socketio.on('leave_chat')
-def handle_leave_chat():
-    try:
-        user = active_users.get(request.sid)
-        if not user or not user['room']:
-            return
-
-        room_id = user['room']
-
-        socketio.emit('user_left', {
-            'username': user['username'],
-            'message': f"{user['username']} left the chat"
-        }, room=room_id)
-
-        user['room'] = None
-
-        # Auto-join waiting queue again
-        with matching_lock:
-            if request.sid not in waiting_queue:
-                waiting_queue.append(request.sid)
-                emit('waiting_for_stranger', {
-                    'message': 'Looking for someone new to chat with...'
-                })
-
-    except Exception as e:
-        print(f"Leave chat error: {e}")
+@socketio.on('ping')
+def handle_ping():
+    """Handle latency ping"""
+    emit('pong')
 
 
 if __name__ == '__main__':
